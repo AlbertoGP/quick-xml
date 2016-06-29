@@ -16,6 +16,19 @@
 #[macro_use]
 extern crate log;
 
+macro_rules! malformed {
+    ($idx: expr, $pat: expr) => {
+        {
+            return Err((Error::Malformed($pat.to_string()), $idx));
+        }
+    };
+    ($idx: expr, $pat: expr, $($args: expr ),* ) => {
+        {
+            return Err((Error::Malformed(format!($pat, $($args),*)), $idx));
+        }
+    };
+}
+
 pub mod error;
 pub mod attributes;
 pub mod namespace;
@@ -279,16 +292,14 @@ impl<B: BufRead> XmlReader<B> {
         if self.with_check {
             let e = match self.opened.pop() {
                 Some(e) => e,
-                None => return self.error(
-                    Error::Malformed(format!("Cannot close {:?} element, \
-                                             there is no opened element",
-                                             buf[1..].as_str())), len),
+                None => malformed!(len, 
+                                   "Cannot close {:?} element, there is no opened element",
+                                   buf[1..].as_str()),
             };
             if &buf[1..] != e.name() {
-                let m = format!("End event {:?} doesn't match last \
-                                opened element {:?}, opened: {:?}", 
-                                Element::from_buffer(buf, 1, len, len), e, &self.opened);
-                return self.error(Error::Malformed(m), len);
+                malformed!(len,
+                           "End event {:?} doesn't match last opened element {:?}, opened: {:?}",
+                           Element::from_buffer(buf, 1, len, len), e, &self.opened);
             }
         }
         Ok(Event::End(Element::from_buffer(buf, 1, len, len)))
@@ -303,8 +314,7 @@ impl<B: BufRead> XmlReader<B> {
             while len < 5 || &buf[(len - 2)..] != b"--" {
                 buf.push(b'>');
                 match read_until(&mut self.reader, b'>', &mut buf) {
-                    Ok(0) => return self.error(
-                        Error::Malformed("Unescaped Comment event".to_string()), len),
+                    Ok(0) => malformed!(len, "Unescaped Comment event"),
                     Ok(n) => self.buf_position += n,
                     Err(e) => return self.error(e, 0),
                 }
@@ -314,8 +324,7 @@ impl<B: BufRead> XmlReader<B> {
                 let mut offset = len - 3;
                 for w in buf[3..(len - 1)].windows(2) {
                     if &*w == b"--" {
-                        return self.error(
-                            Error::Malformed("Unexpected token '--'".to_string()), offset);
+                        malformed!(offset, "Unexpected token '--'");
                     }
                     offset -= 1;
                 }
@@ -328,8 +337,7 @@ impl<B: BufRead> XmlReader<B> {
                     while len < 10 || &buf[(len - 2)..] != b"]]" {
                         buf.push(b'>');
                         match read_until(&mut self.reader, b'>', &mut buf) {
-                            Ok(0) => return self.error(
-                                Error::Malformed("Unescaped CDATA event".to_string()), len),
+                            Ok(0) => malformed!(len, "Unescaped CDATA event"),
                             Ok(n) => self.buf_position += n,
                             Err(e) => return self.error(e, 0),
                         }
@@ -342,8 +350,7 @@ impl<B: BufRead> XmlReader<B> {
                     while count > 0 {
                         buf.push(b'>');
                         match read_until(&mut self.reader, b'>', &mut buf) {
-                            Ok(0) => return self.error(
-                                Error::Malformed("Unescaped DOCTYPE node".to_string()), buf.len()),
+                            Ok(0) => malformed!(buf.len(), "Unescaped DOCTYPE node"),
                             Ok(n) => {
                                 self.buf_position += n;
                                 let start = buf.len() - n;
@@ -355,12 +362,10 @@ impl<B: BufRead> XmlReader<B> {
                     let len = buf.len();
                     Ok(Event::DocType(Element::from_buffer(buf, 1, len, 8)))
                 }
-                _ => self.error(Error::Malformed("Only Comment, CDATA and DOCTYPE nodes \
-                                                 can start with a '!'".to_string()), 0),
+                _ => malformed!(0, "Only Comment, CDATA and DOCTYPE nodes can start with a '!'"),
             }
         } else {
-            self.error(Error::Malformed("Only Comment, CDATA and DOCTYPE nodes can start \
-                                        with a '!'".to_string()), buf.len())
+            malformed!(buf.len(), "Only Comment, CDATA and DOCTYPE nodes can start with a '!'")
         }
     }
 
@@ -375,7 +380,7 @@ impl<B: BufRead> XmlReader<B> {
                 Ok(Event::PI(Element::from_buffer(buf, 1, len - 1, 3)))
             }
         } else {
-            self.error(Error::Malformed("Unescaped XmlDecl event".to_string()), len)
+            malformed!(len, "Unescaped XmlDecl event")
         }
     }
 
@@ -514,7 +519,8 @@ impl Element {
     /// gets escaped content
     ///
     /// Searches for '&' into content and try to escape the coded character if possible
-    /// returns Malformed error with index within element if '&' is not followed by ';'
+    /// returns `Error::Malformed` error with index within element 
+    /// if '&' is not followed by ';'
     pub fn unescaped_content(&self) -> ResultPos<Cow<[u8]>> {
         unescape(self.content())
     }
@@ -594,15 +600,10 @@ impl XmlDecl {
         match self.element.attributes().next() {
             Some(Err(e)) => Err(e),
             Some(Ok((b"version", v))) => Ok(v),
-            Some(Ok((k, _))) => {
-                let m = format!("XmlDecl must start with 'version' attribute, found {:?}",
-                                k.as_str());
-                Err((Error::Malformed(m), 0))
-            }
-            None => {
-                let m = "XmlDecl must start with 'version' attribute, found none".to_string();
-                Err((Error::Malformed(m), 0))
-            }
+            Some(Ok((k, _))) => malformed!(0, 
+                                           "XmlDecl must start with 'version' attribute, found {:?}",
+                                           k.as_str()),
+            None => malformed!(0, "XmlDecl must start with 'version' attribute, found none"),
         }
     }
 

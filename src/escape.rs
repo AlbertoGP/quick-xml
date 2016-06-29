@@ -34,44 +34,31 @@ pub fn unescape(raw: &[u8]) -> ResultPos<Cow<[u8]>> {
                     b"amp" => escapes.push((i..j, ByteOrChar::Byte(b'&'))),
                     b"apos" => escapes.push((i..j, ByteOrChar::Byte(b'\''))),
                     b"quot" => escapes.push((i..j, ByteOrChar::Byte(b'\"'))),
-                    b"" => return Err((Error::Malformed(
-                                "Encountered empty entity".to_string()), i)),
-                    b"#x0" | b"#0" => {
-                        return Err((Error::Malformed(
-                                    "Null character entity is not allowed".to_string()), i))
-                    }
+                    b"" => malformed!(i, "Encountered empty entity"),
+                    b"#x0" | b"#0" => malformed!(i, "Null character entity is not allowed"),
                     bytes if bytes.len() > 1 && bytes[0] == b'#' => {
                         if bytes[1] == b'x' {
                             let name = try!(bytes[2..].as_str()
                                             .map_err(|e| (Error::from(e), i)));
                             match u32::from_str_radix(name, 16).ok() {
                                 Some(c) => escapes.push((i..j, ByteOrChar::Char(c))),
-                                None => {
-                                    return Err((Error::Malformed(
-                                                format!("Invalid hexadecimal character number \
-                                                        in an entity: {}", name)), i))
-                                }
+                                None => malformed!(i, 
+                                                   "Invalid hexadecimal character number in an entity: {}",
+                                                   name)
                             }
                         } else {
                             let name = try!(bytes[1..].as_str()
                                             .map_err(|e| (Error::from(e), i)));
                             match u32::from_str_radix(name, 10).ok() {
                                 Some(c) => escapes.push((i..j, ByteOrChar::Char(c))),
-                                None => {
-                                    return Err((Error::Malformed(
-                                                format!("Invalid decimal character number \
-                                                        in an entity: {}", name)), i))
-                                }
+                                None => malformed!(i, "Invalid decimal character number in an entity: {}", name),
                             }
                         }
                     }
-                    bytes => {
-                        return Err((Error::Malformed(format!("Unexpected entity: {:?}",
-                                                             bytes.as_str())), i))
-                    }
+                    bytes => malformed!(i, "Unexpected entity: {:?}", bytes.as_str()),
                 }
             } else {
-                return Err((Error::Malformed("Cannot find ';' after '&'".to_string()), i));
+                malformed!(i, "Cannot find ';' after '&'");
             }
         }
     }
